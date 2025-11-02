@@ -6,7 +6,7 @@
 /*   By: jainavas <jainavas@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/10/30 15:57:53 by jainavas          #+#    #+#             */
-/*   Updated: 2025/10/30 17:51:31 by jainavas         ###   ########.fr       */
+/*   Updated: 2025/11/02 20:44:26 by jainavas         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -19,6 +19,8 @@
 #include <sstream>
 #include <map>
 #include <vector>
+#include <unistd.h>
+#include <algorithm>
 
 struct Process
 {
@@ -59,6 +61,13 @@ public:
 			std::cout << proc.name << " has a delay of: " << proc.delay << std::endl;
 		}
 	}
+	// Devuelve un puntero al proceso o nullptr si no se encuentra.
+	Process* getProcess(const std::string& processname){
+		for (auto& p : this->processes)
+			if (processname == p.name)
+				return &p;
+	}
+
 };
 
 #endif
