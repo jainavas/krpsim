@@ -2,7 +2,8 @@ CXX = c++
 CXXFLAGS := -Wall -Wextra -Werror -O3 -std=c++17
 
 SRCS = src/main.cpp \
-		src/parser.cpp
+		src/parser.cpp \
+		src/simulator.cpp
 OBJS = $(SRCS:.cpp=.o)
 
 EXEC = krpsim

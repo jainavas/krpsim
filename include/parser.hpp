@@ -6,7 +6,7 @@
 /*   By: jainavas <jainavas@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/10/30 15:57:53 by jainavas          #+#    #+#             */
-/*   Updated: 2025/11/02 20:44:26 by jainavas         ###   ########.fr       */
+/*   Updated: 2025/11/02 22:30:50 by jainavas         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -68,6 +68,15 @@ public:
 				return &p;
 	}
 
+	std::vector<Process>& getAllProcesses(){
+		return this->processes;
+	}
+	std::map<std::string, int> getStocks(){
+		return this->stock;
+	}
+	std::vector<std::string> getOptimizations(){
+		return this->optimizations;
+	}
 };
 
 #endif
