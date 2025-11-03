@@ -6,7 +6,7 @@
 /*   By: jainavas <jainavas@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/10/30 15:57:53 by jainavas          #+#    #+#             */
-/*   Updated: 2025/11/02 22:30:50 by jainavas         ###   ########.fr       */
+/*   Updated: 2025/11/03 00:54:38 by jainavas         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -21,6 +21,8 @@
 #include <vector>
 #include <unistd.h>
 #include <algorithm>
+#include <iomanip>
+#include <queue>
 
 struct Process
 {
