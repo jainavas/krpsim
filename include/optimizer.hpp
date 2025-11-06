@@ -6,7 +6,7 @@
 /*   By: jainavas <jainavas@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/11/03 01:08:13 by jainavas          #+#    #+#             */
-/*   Updated: 2025/11/03 01:15:10 by jainavas         ###   ########.fr       */
+/*   Updated: 2025/11/03 18:36:29 by jainavas         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -14,123 +14,152 @@
 #define OPTIMIZER_HPP
 
 #include "parser.hpp"
-#include <queue>
-#include <set>
-#include <iomanip>
+#include <algorithm>
+#include <cstdlib>
+#include <ctime>
+#include <limits>
 
-class DependencyGraph {
+// ============================================================================
+// ESTRUCTURAS DE DATOS
+// ============================================================================
+
+// Representa una actividad programada en el schedule
+struct ScheduledActivity {
+    std::string process_name;
+    int start_time;
+    int finish_time;
+    
+    ScheduledActivity() : start_time(0), finish_time(0) {}
+    ScheduledActivity(std::string name, int start, int finish) 
+        : process_name(name), start_time(start), finish_time(finish) {}
+};
+
+// Representa una solución completa (schedule)
+struct Solution {
+    std::vector<ScheduledActivity> schedule;  // Lista de actividades programadas
+    int makespan;                              // Tiempo total (duración del proyecto)
+    std::map<std::string, int> final_stocks;  // Stocks finales
+    
+    Solution() : makespan(std::numeric_limits<int>::max()) {}
+};
+
+// ============================================================================
+// ENUMS PARA PRIORITY RULES
+// ============================================================================
+
+enum PriorityRule {
+    LFT,    // Latest Finish Time
+    MTS,    // Minimum Total Slack  
+    GRPW,   // Greatest Rank Positional Weight
+    SPT,    // Shortest Processing Time
+    RANDOM  // Random (para diversidad)
+};
+
+// ============================================================================
+// GRASP OPTIMIZER
+// ============================================================================
+
+class GraspOptimizer {
 private:
-    // Información completa de cada recurso
-    struct ResourceInfo {
-        // Análisis de dependencias
-        int distance_to_target;           // Distancia en el grafo al objetivo
-        int total_needed;                 // Cantidad total necesaria
-        int available_in_stock;           // Cantidad disponible en stock
-        double availability_ratio;        // available / needed
-        bool is_bottleneck;              // ¿Es cuello de botella?
-        std::vector<std::string> produced_by;  // Procesos que lo producen
-        
-        // Análisis temporal
-        int time_to_produce;              // Tiempo mínimo para producir 1 unidad
-        int time_to_produce_needed;       // Tiempo para producir lo necesario
-        int critical_path_length;         // Longitud del camino crítico
-        int earliest_available_time;      // Cuándo estará disponible
-        bool is_on_critical_path;         // ¿Está en el camino crítico?
-        
-        // Prioridad final calculada
-        int priority;
-        
-        // Constructor con valores por defecto
-        ResourceInfo() : distance_to_target(9999), total_needed(0),
-                        available_in_stock(0), availability_ratio(0.0),
-                        is_bottleneck(false), time_to_produce(0),
-                        time_to_produce_needed(0), critical_path_length(0),
-                        earliest_available_time(0), is_on_critical_path(false),
-                        priority(0) {}
-    };
+    // Datos del problema
+    const std::vector<Process>& processes;
+    std::map<std::string, int> initial_stocks;
+    int max_time;  // Tiempo máximo de simulación
     
-    // Información temporal de cada proceso
-    struct ProcessInfo {
-        std::string name;
-        int earliest_start_time;     // Cuándo puede empezar como mínimo
-        int earliest_finish_time;    // Cuándo termina como mínimo
-        int latest_start_time;       // Último momento que puede empezar
-        int latest_finish_time;      // Último momento que puede terminar
-        int slack;                   // Holgura (latest - earliest)
-        bool is_critical;            // Sin holgura = crítico
-        
-        ProcessInfo() : earliest_start_time(0), earliest_finish_time(0),
-                       latest_start_time(0), latest_finish_time(0),
-                       slack(0), is_critical(false) {}
-    };
+    // Parámetros GRASP
+    int num_iterations;     // Número de iteraciones GRASP
+    double alpha;           // Parámetro RCL (0.0 = greedy puro, 1.0 = random puro)
     
-    std::map<std::string, ResourceInfo> resource_info;
-    std::map<std::string, ProcessInfo> process_info;
-    const std::vector<Process>* all_processes;  // Referencia a todos los procesos
+    // Mejor solución encontrada
+    Solution best_solution;
     
 public:
-    DependencyGraph() : all_processes(nullptr) {}
+    GraspOptimizer(const std::vector<Process>& procs, 
+                   const std::map<std::string, int>& stocks,
+                   int max_t = 10000);
     
-    // Análisis completo: dependencias, cantidades, stocks y tiempo
-    void analyze_full_chain(const std::string& target,
-                           int target_quantity,
-                           const std::map<std::string, int>& current_stocks,
-                           const std::vector<Process>& processes);
+    // Método principal - ejecuta GRASP y devuelve la mejor solución
+    Solution solve(int iterations = 100, double alpha_param = 0.3);
     
-    // Getters para información de recursos
-    int get_resource_priority(const std::string& resource) const;
-    bool is_bottleneck(const std::string& resource) const;
-    int get_total_needed(const std::string& resource) const;
-    double get_availability_ratio(const std::string& resource) const;
-    
-    // Getters para información temporal de recursos
-    bool is_on_critical_path(const std::string& resource) const;
-    int get_critical_path_length(const std::string& resource) const;
-    int get_time_to_produce(const std::string& resource) const;
-    int get_earliest_available_time(const std::string& resource) const;
-    
-    // Getters para información temporal de procesos
-    bool is_process_critical(const std::string& process_name) const;
-    int get_process_slack(const std::string& process_name) const;
-    int get_earliest_start_time(const std::string& process_name) const;
-    
-    // Debug: imprimir análisis completo
-    void print_analysis() const;
+    // Getters
+    const Solution& getBestSolution() const { return best_solution; }
     
 private:
-    // Fase 1: Análisis de cantidades (BFS inverso)
-    void analyze_quantities_backward(const std::string& target,
-                                    int target_quantity,
-                                    const std::map<std::string, int>& current_stocks,
-                                    const std::vector<Process>& processes);
+    // ========================================================================
+    // FASE CONSTRUCTIVA (Greedy Randomizado con Serial SGS)
+    // ========================================================================
     
-    // Fase 2: Análisis temporal forward (earliest times)
-    void analyze_time_forward(const std::vector<Process>& processes);
+    // Construye una solución usando Serial SGS con randomización
+    Solution constructGreedySolution(PriorityRule rule, double alpha);
     
-    // Fase 3: Análisis temporal backward (latest times)
-    void analyze_time_backward(const std::string& target,
-                              const std::vector<Process>& processes);
+    // Calcula la prioridad de un proceso según la regla
+    double calculatePriority(const Process& proc, 
+                            const std::map<std::string, int>& current_stocks,
+                            int current_time,
+                            PriorityRule rule) const;
     
-    // Fase 4: Calcular prioridades finales
-    void calculate_final_priorities();
+    // Obtiene los procesos elegibles en un momento dado
+    std::vector<const Process*> getEligibleProcesses(
+        const std::map<std::string, int>& current_stocks,
+        const std::vector<bool>& scheduled) const;
     
-    // Calcular longitud de caminos críticos
-    void calculate_critical_path_lengths(const std::string& target);
+    // Selecciona un proceso de la RCL (Restricted Candidate List)
+    const Process* selectFromRCL(const std::vector<const Process*>& eligible,
+                                 const std::map<std::string, int>& current_stocks,
+                                 int current_time,
+                                 PriorityRule rule,
+                                 double alpha) const;
     
-    // Ordenamiento topológico de procesos
-    std::vector<std::string> topological_sort(const std::vector<Process>& processes) const;
+    // Verifica si un proceso tiene suficientes recursos
+    bool hasResourcesFor(const Process& proc, 
+                        const std::map<std::string, int>& stocks) const;
     
-    // Elegir el mejor productor de un recurso
-    const Process* choose_best_producer(const std::vector<const Process*>& producers) const;
+    // Verifica si las dependencias están satisfechas
+    bool areDependenciesSatisfied(const Process& proc,
+                                  const std::vector<bool>& scheduled,
+                                  const std::map<std::string, int>& stocks) const;
     
-    // Helpers
-    const Process* find_process(const std::vector<Process>& processes,
-                               const std::string& name) const;
+    // ========================================================================
+    // FASE DE MEJORA LOCAL (Forward-Backward Improvement)
+    // ========================================================================
     
-    void calculate_availability_and_priorities(
-        const std::map<std::string, int>& current_stocks);
+    // Mejora una solución usando FBI
+    void localSearch(Solution& solution);
     
-    int calculate_priority_value(const ResourceInfo& info) const;
+    // Forward pass: intenta adelantar cada actividad
+    bool forwardPass(Solution& solution);
+    
+    // Backward pass: intenta retrasar actividades sin afectar el makespan
+    bool backwardPass(Solution& solution);
+    
+    // Verifica si un schedule es factible
+    bool isScheduleFeasible(const Solution& solution) const;
+    
+    // ========================================================================
+    // FUNCIONES AUXILIARES
+    // ========================================================================
+    
+    // Actualiza los stocks después de iniciar un proceso
+    void consumeResources(std::map<std::string, int>& stocks, 
+                         const Process& proc) const;
+    
+    // Actualiza los stocks después de terminar un proceso
+    void produceResources(std::map<std::string, int>& stocks, 
+                         const Process& proc) const;
+    
+    // Calcula el makespan de una solución
+    int calculateMakespan(const Solution& solution) const;
+    
+    // Busca un proceso por nombre
+    const Process* findProcess(const std::string& name) const;
+    
+    // Calcula el slack de un proceso (para MTS rule)
+    int calculateSlack(const Process& proc,
+                      const std::map<std::string, int>& current_stocks,
+                      int current_time) const;
+    
+    // Calcula el rank de un proceso (para GRPW rule)
+    double calculateRank(const Process& proc) const;
 };
 
 #endif

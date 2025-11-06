@@ -6,521 +6,440 @@
 /*   By: jainavas <jainavas@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/11/03 01:08:45 by jainavas          #+#    #+#             */
-/*   Updated: 2025/11/03 01:15:33 by jainavas         ###   ########.fr       */
+/*   Updated: 2025/11/06 16:35:20 by jainavas         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "../include/optimizer.hpp"
 
-void DependencyGraph::analyze_full_chain(const std::string& target,
-                                        int target_quantity,
-                                        const std::map<std::string, int>& current_stocks,
-                                        const std::vector<Process>& processes)
+GraspOptimizer::GraspOptimizer(const std::vector<Process>& procs, 
+                               const std::map<std::string, int>& stocks,
+                               int max_t)
+    : processes(procs), initial_stocks(stocks), max_time(max_t)
 {
-    // Limpiar análisis anterior
-    resource_info.clear();
-    process_info.clear();
-    all_processes = &processes;
-    
-    // Fase 1: BFS inverso con cantidades
-    analyze_quantities_backward(target, target_quantity, current_stocks, processes);
-    
-    // Fase 2: Análisis temporal forward (camino crítico)
-    analyze_time_forward(processes);
-    
-    // Fase 3: Análisis temporal backward
-    analyze_time_backward(target, processes);
-    
-    // Fase 4: Calcular prioridades finales (con tiempo incluido)
-    calculate_final_priorities();
+    std::srand(std::time(nullptr));
+    best_solution.makespan = __INT_MAX__;
 }
 
-void DependencyGraph::analyze_quantities_backward(const std::string& target,
-                                                  int target_quantity,
-                                                  const std::map<std::string, int>& current_stocks,
-                                                  const std::vector<Process>& processes)
+bool GraspOptimizer::hasResourcesFor(const Process& proc, 
+                                     const std::map<std::string, int>& stocks) const
 {
-    std::queue<std::pair<std::string, int>> q;  // (recurso, cantidad)
-    std::map<std::string, int> visited_quantities;
-    
-    q.push({target, target_quantity});
-    visited_quantities[target] = target_quantity;
-    
-    resource_info[target].distance_to_target = 0;
-    resource_info[target].total_needed = target_quantity;
-    
-    while (!q.empty()) {
-        auto [current_resource, current_qty] = q.front();
-        q.pop();
+    // TODO: Recorrer proc.requisites
+	for (auto& p : proc.requisites)
+	{
+		for (auto& s : stocks)
+		{
+			if (s.first == p.first)
+				if (s.second < p.second)
+					return false;
+		}
+	}
+	return true;
+    // TODO: Para cada recurso, verificar que stocks[recurso] >= cantidad_necesaria
+    // TODO: Si alguno no tiene suficiente, return false
+    // TODO: Si todos están ok, return true
+}
+
+void GraspOptimizer::consumeResources(std::map<std::string, int>& stocks, 
+                                      const Process& proc) const
+{
+    // TODO: Recorrer proc.requisites
+	for (auto& p : proc.requisites)
+		stocks[p.first] -= p.second;
+    // TODO: Para cada recurso: stocks[recurso] -= cantidad
+}
+
+void GraspOptimizer::produceResources(std::map<std::string, int>& stocks, 
+                                      const Process& proc) const
+{
+    // TODO: Recorrer proc.produces
+	for (auto& p : proc.requisites)
+	{
+		if (stocks.count(p.first) == 0)
+			stocks.insert(std::make_pair(p.first, 0));
+		stocks[p.first] += p.second;
+	}
+    // TODO: Para cada recurso: stocks[recurso] += cantidad
+    // TODO: Si el recurso no existe en stocks, crearlo
+}
+
+const Process* GraspOptimizer::findProcess(const std::string& name) const
+{
+    // TODO: Recorrer processes
+	for (auto& p : this->processes)
+	{
+		if (p.name == name)
+			return (&p);
+	}
+	return (nullptr);
+    // TODO: Si encuentras uno con proc.name == name, return &proc
+    // TODO: Si no lo encuentras, return nullptr
+}
+
+int GraspOptimizer::calculateMakespan(const Solution& solution) const
+{
+    // TODO: Si solution.schedule está vacío, return 0
+    // TODO: Encontrar el finish_time máximo de todas las actividades
+    // TODO: Return ese tiempo máximo
+	if (solution.schedule.empty())
+		return (0);
+	int max = solution.schedule.begin()->finish_time;
+	for (auto& s : solution.schedule)
+	{
+		if (s.finish_time > max)
+			max = s.finish_time;
+	}
+	return (max);
+}
+
+bool GraspOptimizer::areDependenciesSatisfied(
+    const Process& proc,
+    const std::vector<bool>& scheduled,
+    const std::map<std::string, int>& stocks) const
+{
+    // Para cada recurso que necesita este proceso
+    for (const auto& [recurso_necesario, cantidad] : proc.requisites) {
         
-        int current_dist = resource_info[current_resource].distance_to_target;
-        
-        // Buscar TODOS los procesos que producen este recurso
-        std::vector<const Process*> producers;
-        for (const auto& proc : processes) {
-            if (proc.produces.count(current_resource)) {
-                producers.push_back(&proc);
-                resource_info[current_resource].produced_by.push_back(proc.name);
-            }
+        // ¿Hay stock inicial de este recurso?
+        if (stocks.count(recurso_necesario) && stocks.at(recurso_necesario) > 0) {
+            continue;  // OK, hay stock, no necesita dependencia
         }
         
-        if (producers.empty()) {
-            // Es un recurso base (del stock inicial)
-            resource_info[current_resource].available_in_stock = 
-                current_stocks.count(current_resource) ? 
-                current_stocks.at(current_resource) : 0;
-            continue;
-        }
+        // No hay stock, así que ALGUIEN debe haberlo producido
+        bool alguien_lo_produjo = false;
         
-        // Elegir el mejor productor
-        const Process* best_producer = choose_best_producer(producers);
-        
-        // Calcular cuántas veces necesitamos ejecutar este proceso
-        int produced_per_run = best_producer->produces.at(current_resource);
-        int times_needed = (current_qty + produced_per_run - 1) / produced_per_run;
-        
-        // Propagar necesidades a los requisitos
-        for (const auto& [req, req_qty] : best_producer->requisites) {
-            int total_req_needed = req_qty * times_needed;
+        // Buscar quién produce este recurso
+        for (size_t i = 0; i < processes.size(); i++) {
             
-            if (visited_quantities.count(req)) {
-                visited_quantities[req] += total_req_needed;
-                resource_info[req].total_needed += total_req_needed;
-            } else {
-                visited_quantities[req] = total_req_needed;
-                resource_info[req].distance_to_target = current_dist + 1;
-                resource_info[req].total_needed = total_req_needed;
-                q.push({req, total_req_needed});
-            }
-        }
-        
-        // Considerar subproductos
-        for (const auto& [prod, prod_qty] : best_producer->produces) {
-            if (prod != current_resource) {
-                int generated = prod_qty * times_needed;
-                if (resource_info.count(prod)) {
-                    resource_info[prod].total_needed -= generated;
-                    if (resource_info[prod].total_needed < 0)
-                        resource_info[prod].total_needed = 0;
+            // ¿Este proceso produce el recurso que necesitamos?
+            if (processes[i].produces.count(recurso_necesario)) {
+                
+                // ¿Y además YA fue programado?
+                if (scheduled[i] == true) {
+                    alguien_lo_produjo = true;
+                    break;  // Ya encontramos a alguien, suficiente
                 }
             }
         }
+        
+        // Si nadie ha producido este recurso todavía
+        if (!alguien_lo_produjo) {
+            return false;  // No se pueden satisfacer las dependencias
+        }
     }
     
-    // Calcular availability ratios
-    calculate_availability_and_priorities(current_stocks);
+    return true;  // Todas las dependencias están OK
 }
 
-void DependencyGraph::analyze_time_forward(const std::vector<Process>& processes)
+std::vector<const Process*> GraspOptimizer::getEligibleProcesses(
+    const std::map<std::string, int>& current_stocks,
+    const std::vector<bool>& scheduled) const
 {
-    auto sorted_processes = topological_sort(processes);
+    std::vector<const Process*> eligible;
     
-    for (const auto& proc_name : sorted_processes) {
-        const Process* proc = find_process(processes, proc_name);
-        if (!proc) continue;
+    // TODO: Recorrer processes con índice i
+	for (size_t i = 0; i < processes.size(); i++)
+	{
+		if (scheduled[i] || !hasResourcesFor(processes[i], current_stocks) || !areDependenciesSatisfied(processes[i], scheduled, current_stocks))
+			continue;
+
+		eligible.emplace_back(processes[i]);
+	}
+    // TODO: Si scheduled[i] == true, skip (ya está programado)
+    // TODO: Si !hasResourcesFor(processes[i], current_stocks), skip
+    // TODO: Si !areDependenciesSatisfied(processes[i], scheduled, current_stocks), skip
+    // TODO: Si pasa todo, añadir &processes[i] al vector eligible
+    
+    return eligible;
+}
+
+int GraspOptimizer::calculateSlack(const Process& proc,
+                                   const std::map<std::string, int>& current_stocks,
+                                   int current_time) const
+{
+    int time_available = max_time - current_time;
+    
+    // Estimación simple: 
+    // tiempo_necesario = delay del proceso + estimación de procesos posteriores
+    int num_outputs = proc.produces.size();
+    int estimated_subsequent = proc.delay * (num_outputs > 0 ? num_outputs : 1);
+    
+    int slack = time_available - estimated_subsequent;
+    
+    return slack;
+}
+
+double GraspOptimizer::calculateRank(const Process& proc) const
+{
+    double rank = 0.0;
+    
+    // TODO: Cuando integres con simulator, recibir target_resources como parámetro
+    std::vector<std::string> target_resources;  // Vacío por ahora
+    
+    // 1. Valor por lo que produce
+    for (const auto& [resource, qty] : proc.produces) {
+        double value = qty;
         
-        ProcessInfo& info = process_info[proc_name];
-        info.name = proc_name;
-        
-        // Earliest start = cuando todos los requisitos están disponibles
-        int earliest_start = 0;
-        
-        for (const auto& [req, qty] : proc->requisites) {
-            if (resource_info.count(req)) {
-                int req_time = resource_info[req].earliest_available_time;
-                earliest_start = std::max(earliest_start, req_time);
+        // BONUS CRÍTICO: si produce un recurso objetivo
+        bool is_target = false;
+        for (const auto& target : target_resources) {
+            if (resource == target) {
+                rank += 100000.0 * qty;  // PRIORIDAD ABSOLUTA
+                is_target = true;
+                break;
             }
         }
         
-        info.earliest_start_time = earliest_start;
-        info.earliest_finish_time = earliest_start + proc->delay;
+        // Si NO es objetivo, aplicar heurística de demanda
+        if (!is_target) {
+            // Contar cuántos procesos necesitan este recurso
+            int num_processes_need_it = 0;
+            for (const auto& p : processes) {
+                if (p.requisites.count(resource)) {
+                    num_processes_need_it++;
+                }
+            }
+            
+            // Bonus por demanda: recursos muy demandados son valiosos
+            // porque son productos intermedios necesarios
+            double demand_bonus = 1.0 + num_processes_need_it * 0.5;
+            
+            // Bonus adicional si tiene MUCHA demanda (>5 procesos)
+            if (num_processes_need_it > 5) {
+                demand_bonus *= 2.0;  // Es un cuello de botella
+            }
+            
+            value *= demand_bonus;
+        }
         
-        // Actualizar cuando estarán disponibles los outputs
-        for (const auto& [prod, qty] : proc->produces) {
-            if (!resource_info.count(prod)) {
-                resource_info[prod].earliest_available_time = info.earliest_finish_time;
+        rank += value;
+    }
+    
+    // 2. Penalización por lo que consume (más suave)
+    for (const auto& [resource, qty] : proc.requisites) {
+        rank -= qty * 0.3;
+    }
+    
+    // 3. Pequeño bonus por delay
+    rank += proc.delay * 0.1;
+    
+    return rank;
+}
+
+double GraspOptimizer::calculatePriority(const Process& proc, 
+                                        const std::map<std::string, int>& current_stocks,
+                                        int current_time,
+                                        PriorityRule rule) const
+{
+    switch (rule) {
+        case LFT:  // Latest Finish Time (menor es mejor)
+            // Prioridad = -1 * (max_time - current_time - proc.delay)
+            // Cuanto menos tiempo quede, más urgente
+            return -(max_time - current_time - proc.delay);
+            
+        case MTS:  // Minimum Total Slack (menor slack = más urgente)
+            return -calculateSlack(proc, current_stocks, current_time);
+            
+        case GRPW: // Greatest Rank (mayor rank = más urgente)
+            return calculateRank(proc);
+            
+        case SPT:  // Shortest Processing Time (menor delay = primero)
+            return -proc.delay;
+            
+        case RANDOM:
+            return rand() % 1000;  // Aleatorio entre 0-999
+            
+        default:
+            return 0.0;
+    }
+}
+
+const Process* GraspOptimizer::selectFromRCL(
+    const std::vector<const Process*>& eligible,
+    const std::map<std::string, int>& current_stocks,
+    int current_time,
+    PriorityRule rule,
+    double alpha) const
+{
+    if (eligible.empty()) {
+        return nullptr;
+    }
+    
+    // 1. Calcular prioridad de cada proceso elegible
+    std::vector<std::pair<const Process*, double>> candidates;
+    
+    for (const auto* proc : eligible) {
+        double priority = calculatePriority(*proc, current_stocks, current_time, rule);
+        candidates.push_back({proc, priority});
+    }
+    
+    // 2. Ordenar por prioridad (de mayor a menor)
+    std::sort(candidates.begin(), candidates.end(),
+        [](const auto& a, const auto& b) {
+            return a.second > b.second;  // Mayor prioridad primero
+        });
+    
+    // 3. Construir la RCL (Restricted Candidate List)
+    // RCL contiene los mejores α% de candidatos
+    
+    double best_priority = candidates[0].second;
+    double worst_priority = candidates.back().second;
+    
+    // Threshold: solo candidatos con prioridad >= threshold entran en RCL
+    double threshold = worst_priority + alpha * (best_priority - worst_priority);
+    
+    std::vector<const Process*> rcl;
+    for (const auto& [proc, priority] : candidates) {
+        if (priority >= threshold) {
+            rcl.push_back(proc);
+        }
+    }
+    
+    // 4. Elegir ALEATORIAMENTE uno de la RCL
+    int random_index = rand() % rcl.size();
+    return rcl[random_index];
+}
+
+Solution GraspOptimizer::constructGreedySolution(PriorityRule rule, double alpha)
+{
+    Solution solution;
+    
+    // Estado de la construcción
+    std::vector<bool> scheduled(processes.size(), false);
+    std::map<std::string, int> current_stocks = initial_stocks;
+    int current_time = 0;
+    
+    // Lista de procesos en ejecución (start_time, process_index)
+    std::vector<std::pair<int, size_t>> running;
+    
+    int scheduled_count = 0;
+    int total_processes = processes.size();
+    
+    // Mientras haya procesos por programar
+    while (scheduled_count < total_processes && current_time < max_time) {
+        
+        // 1. Terminar procesos que finalizan en este ciclo
+        std::vector<std::pair<int, size_t>> still_running;
+        
+        for (const auto& [start_time, proc_idx] : running) {
+            int finish_time = start_time + processes[proc_idx].delay;
+            
+            if (finish_time <= current_time) {
+                // Este proceso terminó
+                produceResources(current_stocks, processes[proc_idx]);
+                
+                // Añadir al schedule
+                solution.schedule.push_back(
+                    ScheduledActivity(processes[proc_idx].name, start_time, finish_time)
+                );
             } else {
-                resource_info[prod].earliest_available_time = 
-                    std::min(resource_info[prod].earliest_available_time,
-                            info.earliest_finish_time);
+                // Sigue ejecutándose
+                still_running.push_back({start_time, proc_idx});
             }
-            
-            // Calcular tiempo para producir cantidad necesaria
-            if (resource_info[prod].total_needed > 0 && qty > 0) {
-                int times = (resource_info[prod].total_needed + qty - 1) / qty;
-                resource_info[prod].time_to_produce_needed = 
-                    info.earliest_finish_time * times;
-            }
-            
-            resource_info[prod].time_to_produce = proc->delay;
         }
-    }
-}
-
-void DependencyGraph::analyze_time_backward(const std::string& target,
-                                           const std::vector<Process>& processes)
-{
-    // El objetivo debe estar listo en su earliest_finish_time
-    int project_deadline = resource_info.count(target) ? 
-                          resource_info[target].earliest_available_time : 10000;
-    
-    // Ordenar procesos en orden inverso
-    auto sorted = topological_sort(processes);
-    std::reverse(sorted.begin(), sorted.end());
-    
-    for (const auto& proc_name : sorted) {
-        const Process* proc = find_process(processes, proc_name);
-        if (!proc) continue;
         
-        ProcessInfo& info = process_info[proc_name];
+        running = still_running;
         
-        // Latest finish = el mínimo de los latest start de procesos que usan sus outputs
-        int latest_finish = project_deadline;
+        // 2. Obtener procesos elegibles
+        std::vector<const Process*> eligible = getEligibleProcesses(current_stocks, scheduled);
         
-        for (const auto& [prod, qty] : proc->produces) {
-            // Buscar procesos que usan este producto
-            for (const auto& other_proc : processes) {
-                if (other_proc.requisites.count(prod)) {
-                    if (process_info.count(other_proc.name)) {
-                        latest_finish = std::min(latest_finish,
-                            process_info[other_proc.name].latest_start_time);
+        // 3. Si hay elegibles, programar UNO
+        if (!eligible.empty()) {
+            const Process* selected = selectFromRCL(eligible, current_stocks, current_time, rule, alpha);
+            
+            if (selected != nullptr) {
+                // Encontrar el índice del proceso seleccionado
+                size_t proc_idx = 0;
+                for (size_t i = 0; i < processes.size(); i++) {
+                    if (&processes[i] == selected) {
+                        proc_idx = i;
+                        break;
                     }
                 }
+                
+                // Consumir recursos inmediatamente
+                consumeResources(current_stocks, *selected);
+                
+                // Marcar como programado
+                scheduled[proc_idx] = true;
+                scheduled_count++;
+                
+                // Añadir a la lista de ejecución
+                running.push_back({current_time, proc_idx});
             }
         }
         
-        info.latest_finish_time = latest_finish;
-        info.latest_start_time = latest_finish - proc->delay;
-        
-        // Calcular holgura (slack)
-        info.slack = info.latest_start_time - info.earliest_start_time;
-        
-        // Es crítico si no tiene holgura
-        info.is_critical = (info.slack <= 0);
-        
-        // Marcar recursos del camino crítico
-        if (info.is_critical) {
-            for (const auto& [prod, qty] : proc->produces) {
-                resource_info[prod].is_on_critical_path = true;
-            }
-            for (const auto& [req, qty] : proc->requisites) {
-                resource_info[req].is_on_critical_path = true;
-            }
-        }
+        // 4. Avanzar el tiempo
+        current_time++;
     }
     
-    // Calcular longitud de camino crítico para cada recurso
-    calculate_critical_path_lengths(target);
-}
-
-void DependencyGraph::calculate_critical_path_lengths(const std::string& target)
-{
-    std::queue<std::string> q;
-    std::set<std::string> visited;
-    
-    if (resource_info.count(target)) {
-        resource_info[target].critical_path_length = 0;
-        q.push(target);
-    }
-    
-    while (!q.empty()) {
-        std::string resource = q.front();
-        q.pop();
+    // Esperar a que terminen los procesos que aún están corriendo
+    while (!running.empty()) {
+        std::vector<std::pair<int, size_t>> still_running;
         
-        if (visited.count(resource)) continue;
-        visited.insert(resource);
-        
-        int current_length = resource_info[resource].critical_path_length;
-        
-        // Buscar procesos que producen este recurso
-        for (const auto& proc_name : resource_info[resource].produced_by) {
-            if (!process_info.count(proc_name)) continue;
+        for (const auto& [start_time, proc_idx] : running) {
+            int finish_time = start_time + processes[proc_idx].delay;
             
-            const Process* proc = find_process(*all_processes, proc_name);
-            if (!proc) continue;
-            
-            int new_length = current_length + proc->delay;
-            
-            // Propagar a los requisitos
-            for (const auto& [req, qty] : proc->requisites) {
-                if (!resource_info.count(req) || 
-                    resource_info[req].critical_path_length < new_length) {
-                    resource_info[req].critical_path_length = new_length;
-                    q.push(req);
-                }
+            if (finish_time <= current_time) {
+                produceResources(current_stocks, processes[proc_idx]);
+                solution.schedule.push_back(
+                    ScheduledActivity(processes[proc_idx].name, start_time, finish_time)
+                );
+            } else {
+                still_running.push_back({start_time, proc_idx});
             }
         }
-    }
-}
-
-std::vector<std::string> DependencyGraph::topological_sort(
-    const std::vector<Process>& processes) const
-{
-    std::map<std::string, std::vector<std::string>> graph;
-    std::map<std::string, int> in_degree;
-    
-    // Inicializar
-    for (const auto& proc : processes) {
-        in_degree[proc.name] = 0;
-        graph[proc.name] = {};
-    }
-    
-    // Construir aristas
-    for (const auto& proc : processes) {
-        for (const auto& [req, qty] : proc.requisites) {
-            for (const auto& other : processes) {
-                if (other.produces.count(req)) {
-                    graph[other.name].push_back(proc.name);
-                    in_degree[proc.name]++;
-                }
-            }
+        
+        running = still_running;
+        
+        if (!running.empty()) {
+            current_time++;
         }
     }
     
-    // Kahn's algorithm
-    std::queue<std::string> q;
-    for (const auto& [proc, degree] : in_degree) {
-        if (degree == 0) q.push(proc);
-    }
+    // Calcular makespan y stocks finales
+    solution.makespan = calculateMakespan(solution);
+    solution.final_stocks = current_stocks;
     
-    std::vector<std::string> result;
-    while (!q.empty()) {
-        std::string proc = q.front();
-        q.pop();
-        result.push_back(proc);
-        
-        for (const auto& neighbor : graph[proc]) {
-            in_degree[neighbor]--;
-            if (in_degree[neighbor] == 0) {
-                q.push(neighbor);
-            }
-        }
-    }
-    
-    return result;
+    return solution;
 }
 
-const Process* DependencyGraph::choose_best_producer(
-    const std::vector<const Process*>& producers) const
+Solution GraspOptimizer::solve(int iterations, double alpha_param)
 {
-    const Process* best = producers[0];
-    double best_efficiency = -1;
+    num_iterations = iterations;
+    alpha = alpha_param;
     
-    for (const auto* proc : producers) {
-        double production = 0;
-        for (const auto& [res, qty] : proc->produces) {
-            production += qty;
+    std::cout << "Iniciando GRASP con " << iterations << " iteraciones (alpha=" << alpha << ")...\n";
+    
+    // Array de reglas a probar
+    PriorityRule rules[] = {LFT, MTS, GRPW, SPT, RANDOM};
+    int num_rules = 5;
+    
+    for (int iter = 0; iter < num_iterations; iter++) {
+        // 1. Elegir una regla (rotar entre todas)
+        PriorityRule current_rule = rules[iter % num_rules];
+        
+        // 2. FASE CONSTRUCTIVA: Construir solución greedy randomizada
+        Solution candidate = constructGreedySolution(current_rule, alpha);
+        
+        // 3. FASE DE MEJORA: Aplicar búsqueda local
+        localSearch(candidate);
+        
+        // 4. Actualizar mejor solución si es mejor
+        if (candidate.makespan < best_solution.makespan) {
+            best_solution = candidate;
+            std::cout << "  Iteración " << iter << ": Nueva mejor solución (makespan=" 
+                      << best_solution.makespan << ")\n";
         }
         
-        double cost = proc->delay;
-        for (const auto& [req, qty] : proc->requisites) {
-            cost += qty * (resource_info.count(req) ? 1 : 10);
-        }
-        
-        double efficiency = production / (cost + 1);
-        
-        if (efficiency > best_efficiency) {
-            best_efficiency = efficiency;
-            best = proc;
+        // Mostrar progreso cada 10%
+        if ((iter + 1) % (iterations / 10) == 0) {
+            std::cout << "  Progreso: " << (iter + 1) << "/" << iterations 
+                      << " (" << ((iter + 1) * 100 / iterations) << "%)\n";
         }
     }
     
-    return best;
-}
-
-void DependencyGraph::calculate_availability_and_priorities(
-    const std::map<std::string, int>& current_stocks)
-{
-    for (auto& [resource, info] : resource_info) {
-        info.available_in_stock = 
-            current_stocks.count(resource) ? 
-            current_stocks.at(resource) : 0;
-        
-        if (info.total_needed > 0) {
-            info.availability_ratio = 
-                (double)info.available_in_stock / info.total_needed;
-        } else {
-            info.availability_ratio = 999.0;
-        }
-        
-        info.is_bottleneck = 
-            (info.availability_ratio < 0.5) || 
-            (info.availability_ratio < 1.0 && info.distance_to_target > 3);
-    }
-}
-
-void DependencyGraph::calculate_final_priorities()
-{
-    for (auto& [resource, info] : resource_info) {
-        int priority = 0;
-        
-        // 1. Distancia al objetivo
-        if (info.distance_to_target < 9999) {
-            priority += 1000 / (1 << std::min(info.distance_to_target, 10));
-        }
-        
-        // 2. Camino crítico (máxima prioridad)
-        if (info.is_on_critical_path) {
-            priority += 10000;
-        }
-        
-        // 3. Longitud del camino crítico desde este recurso
-        priority += info.critical_path_length * 10;
-        
-        // 4. Tiempo necesario para producir
-        if (info.time_to_produce > 0) {
-            priority += std::min(info.time_to_produce * 5, 5000);
-        }
-        
-        // 5. Bottleneck
-        if (info.is_bottleneck) {
-            priority += 5000;
-        }
-        
-        // 6. Ratio de disponibilidad
-        if (info.availability_ratio < 0.1) {
-            priority += 3000;
-        } else if (info.availability_ratio < 0.5) {
-            priority += 1000;
-        } else if (info.availability_ratio < 1.0) {
-            priority += 500;
-        }
-        
-        // 7. Cantidad necesaria
-        priority += std::min(info.total_needed, 1000);
-        
-        info.priority = priority;
-    }
-}
-
-const Process* DependencyGraph::find_process(const std::vector<Process>& processes,
-                                            const std::string& name) const
-{
-    for (const auto& p : processes) {
-        if (p.name == name) return &p;
-    }
-    return nullptr;
-}
-
-// Getters
-int DependencyGraph::get_resource_priority(const std::string& resource) const
-{
-    if (resource_info.count(resource))
-        return resource_info.at(resource).priority;
-    return 0;
-}
-
-bool DependencyGraph::is_bottleneck(const std::string& resource) const
-{
-    if (resource_info.count(resource))
-        return resource_info.at(resource).is_bottleneck;
-    return false;
-}
-
-int DependencyGraph::get_total_needed(const std::string& resource) const
-{
-    if (resource_info.count(resource))
-        return resource_info.at(resource).total_needed;
-    return 0;
-}
-
-double DependencyGraph::get_availability_ratio(const std::string& resource) const
-{
-    if (resource_info.count(resource))
-        return resource_info.at(resource).availability_ratio;
-    return 1.0;
-}
-
-bool DependencyGraph::is_on_critical_path(const std::string& resource) const
-{
-    if (resource_info.count(resource))
-        return resource_info.at(resource).is_on_critical_path;
-    return false;
-}
-
-int DependencyGraph::get_critical_path_length(const std::string& resource) const
-{
-    if (resource_info.count(resource))
-        return resource_info.at(resource).critical_path_length;
-    return 0;
-}
-
-int DependencyGraph::get_time_to_produce(const std::string& resource) const
-{
-    if (resource_info.count(resource))
-        return resource_info.at(resource).time_to_produce;
-    return 0;
-}
-
-int DependencyGraph::get_earliest_available_time(const std::string& resource) const
-{
-    if (resource_info.count(resource))
-        return resource_info.at(resource).earliest_available_time;
-    return 0;
-}
-
-bool DependencyGraph::is_process_critical(const std::string& process_name) const
-{
-    if (process_info.count(process_name))
-        return process_info.at(process_name).is_critical;
-    return false;
-}
-
-int DependencyGraph::get_process_slack(const std::string& process_name) const
-{
-    if (process_info.count(process_name))
-        return process_info.at(process_name).slack;
-    return 999;
-}
-
-int DependencyGraph::get_earliest_start_time(const std::string& process_name) const
-{
-    if (process_info.count(process_name))
-        return process_info.at(process_name).earliest_start_time;
-    return 0;
-}
-
-void DependencyGraph::print_analysis() const
-{
-    std::cout << "\n=== ANÁLISIS DE RECURSOS (CON TIEMPO) ===\n";
+    std::cout << "GRASP completado. Mejor makespan encontrado: " << best_solution.makespan << "\n";
     
-    std::vector<std::pair<std::string, ResourceInfo>> sorted;
-    for (const auto& [res, info] : resource_info) {
-        sorted.push_back({res, info});
-    }
-    std::sort(sorted.begin(), sorted.end(),
-        [](const auto& a, const auto& b) { return a.second.priority > b.second.priority; });
-    
-    for (const auto& [resource, info] : sorted) {
-        std::cout << resource << ":\n";
-        std::cout << "  Distancia: " << info.distance_to_target << "\n";
-        std::cout << "  Necesario: " << info.total_needed << "\n";
-        std::cout << "  Disponible: " << info.available_in_stock << "\n";
-        std::cout << "  Ratio: " << std::fixed << std::setprecision(2) 
-                  << info.availability_ratio << "\n";
-        std::cout << "  Tiempo producir 1: " << info.time_to_produce << "\n";
-        std::cout << "  Tiempo total necesario: " << info.time_to_produce_needed << "\n";
-        std::cout << "  Longitud camino crítico: " << info.critical_path_length << "\n";
-        std::cout << "  En camino crítico: " << (info.is_on_critical_path ? "SÍ ⚡" : "no") << "\n";
-        std::cout << "  Prioridad: " << info.priority << "\n";
-        std::cout << "  Bottleneck: " << (info.is_bottleneck ? "SÍ" : "no") << "\n";
-        if (!info.produced_by.empty()) {
-            std::cout << "  Producido por: ";
-            for (const auto& proc : info.produced_by)
-                std::cout << proc << " ";
-            std::cout << "\n";
-        }
-        std::cout << "\n";
-    }
-    
-    std::cout << "\n=== PROCESOS CRÍTICOS ===\n";
-    for (const auto& [proc_name, info] : process_info) {
-        if (info.is_critical) {
-            std::cout << proc_name << " ⚡\n";
-            std::cout << "  Earliest start: " << info.earliest_start_time << "\n";
-            std::cout << "  Latest start: " << info.latest_start_time << "\n";
-            std::cout << "  Holgura: " << info.slack << "\n";
-            std::cout << "\n";
-        }
-    }
+    return best_solution;
 }
